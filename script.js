@@ -195,7 +195,7 @@ class AudioCaptioner {
             this.updateCaptionsDisplay('Converting audio file...');
             
             // Convert audio file to the format expected by the model
-            const audioBuffer = await this.convertAudioFile(this.currentAudioFile);
+            const audioBuffer = await this.convertAudioFile(this.currentAudioFile, 16000);
             
             this.updateCaptionsDisplay('Transcribing audio... This may take a moment.');
             
@@ -237,30 +237,41 @@ class AudioCaptioner {
         }
     }
     
-    async convertAudioFile(file) {
+    async convertAudioFile(file, targetSampleRate) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = async (e) => {
                 try {
                     const arrayBuffer = e.target.result;
                     const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-                    
-                    // Convert to mono and resample to 16kHz (required by Whisper)
-                    const sampleRate = 16000;
-                    const length = Math.floor(audioBuffer.duration * sampleRate);
-                    const result = new Float32Array(length);
-                    
-                    // Get the first channel (mono)
-                    const inputData = audioBuffer.getChannelData(0);
-                    const ratio = inputData.length / length;
-                    
-                    for (let i = 0; i < length; i++) {
-                        const index = Math.floor(i * ratio);
-                        result[i] = inputData[index];
+                    const decodedBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    const sourceSampleRate = decodedBuffer.sampleRate;
+    
+                    if (sourceSampleRate === targetSampleRate) {
+                        resolve(decodedBuffer.getChannelData(0));
+                        return;
                     }
-                    
-                    resolve(result);
+    
+                    // Resample using linear interpolation
+                    const sourceData = decodedBuffer.getChannelData(0); // mono
+                    const sourceLength = sourceData.length;
+                    const targetLength = Math.round(sourceLength * (targetSampleRate / sourceSampleRate));
+                    const resampledData = new Float32Array(targetLength);
+                    const ratio = (sourceLength - 1) / (targetLength - 1);
+    
+                    for (let i = 0; i < targetLength; i++) {
+                        const index = i * ratio;
+                        const lowIndex = Math.floor(index);
+                        const highIndex = Math.ceil(index);
+                        const weight = index - lowIndex;
+                        
+                        const lowValue = sourceData[lowIndex] || 0;
+                        const highValue = sourceData[highIndex] || 0;
+                        
+                        resampledData[i] = lowValue * (1 - weight) + highValue * weight;
+                    }
+    
+                    resolve(resampledData);
                 } catch (error) {
                     reject(error);
                 }
@@ -447,6 +458,7 @@ class AudioCaptioner {
         }
 
         this.analysisResults.textContent = 'Loading analysis models...';
+        let overallResultsHTML = '';
 
         try {
             // Initialize all models, loading them on demand
@@ -461,23 +473,31 @@ class AudioCaptioner {
             }
 
             this.analysisResults.textContent = 'Preparing audio for analysis...';
-            const mono16k = await this.convertAudioFile(this.currentAudioFile);
+            const mono16k = await this.convertAudioFile(this.currentAudioFile, 16000);
             
             this.analysisResults.textContent = 'Performing overall analysis...';
             
             // --- Overall Analysis ---
-            const [ksResults, emoResults] = await Promise.all([
-                this.emotionClassifier(mono16k),
-                this.emotionClassifier2(mono16k)
-            ]);
-            const topKS = ksResults[0];
-            const topEmo = emoResults.slice(0, 3);
-            const { rms, zcr } = this.computeSignalStats(mono16k);
+            overallResultsHTML += `<h3>Overall Audio Profile</h3>`;
+            
+            try {
+                const [ksResults, emoResults] = await Promise.all([
+                    this.emotionClassifier(mono16k),
+                    this.emotionClassifier2(mono16k)
+                ]);
+                const topKS = ksResults[0];
+                const topEmo = emoResults.slice(0, 3);
+                 overallResultsHTML += `
+                    <div><strong>Top Keyword/Sound:</strong> ${topKS.label} (${(topKS.score * 100).toFixed(1)}%)</div>
+                    <div><strong>Dominant Emotions:</strong> ${topEmo.map(e => `${e.label} (${(e.score * 100).toFixed(1)}%)`).join(', ')}</div>
+                `;
+            } catch (e) {
+                console.error("Overall emotion/keyword analysis failed:", e);
+                overallResultsHTML += `<div>Could not perform emotion/keyword analysis.</div>`;
+            }
 
-            let overallResultsHTML = `
-                <h3>Overall Audio Profile</h3>
-                <div><strong>Top Keyword/Sound:</strong> ${topKS.label} (${(topKS.score * 100).toFixed(1)}%)</div>
-                <div><strong>Dominant Emotions:</strong> ${topEmo.map(e => `${e.label} (${(e.score * 100).toFixed(1)}%)`).join(', ')}</div>
+            const { rms, zcr } = this.computeSignalStats(mono16k);
+            overallResultsHTML += `
                 <div><strong>Loudness (RMS):</strong> ${rms.toFixed(3)} <small>(Higher value means louder audio)</small></div>
                 <div><strong>Noisiness/Pitch (ZCR):</strong> ${zcr.toFixed(3)} <small>(Higher value can indicate noisy or high-frequency sounds)</small></div>
             `;
@@ -511,16 +531,31 @@ class AudioCaptioner {
                 // Update UI with progress
                 timelineResultsDiv.innerHTML = timelineHTML + `<p><em>Analyzing ${this.formatTime(startTime)} - ${this.formatTime(endTime)}...</em></p>`;
 
-                const soundEvents = await this.soundClassifier(chunk, candidate_labels, { top_k: 3 });
-                
-                const eventsString = soundEvents
-                    .filter(e => e.score > 0.1) // Filter out low-confidence results
-                    .map(e => `${e.label} (${(e.score * 100).toFixed(0)}%)`).join(', ');
+                try {
+                     // Input validation
+                    if (!chunk.every(Number.isFinite)) {
+                        console.warn(`Skipping chunk at ${this.formatTime(startTime)} due to non-finite values.`);
+                        continue;
+                    }
 
-                if (eventsString) {
-                    timelineHTML += `
+                    const soundEvents = await this.soundClassifier(chunk, candidate_labels, { top_k: 3 });
+                    
+                    const eventsString = soundEvents
+                        .filter(e => e.score > 0.1) // Filter out low-confidence results
+                        .map(e => `${e.label} (${(e.score * 100).toFixed(0)}%)`).join(', ');
+
+                    if (eventsString) {
+                        timelineHTML += `
+                            <div class="timeline-item">
+                                <strong>${this.formatTime(startTime)} - ${this.formatTime(endTime)}:</strong> ${eventsString}
+                            </div>
+                        `;
+                    }
+                } catch (e) {
+                    console.error(`Timeline analysis for chunk at ${this.formatTime(startTime)} failed:`, e);
+                     timelineHTML += `
                         <div class="timeline-item">
-                            <strong>${this.formatTime(startTime)} - ${this.formatTime(endTime)}:</strong> ${eventsString}
+                            <strong>${this.formatTime(startTime)} - ${this.formatTime(endTime)}:</strong> <span style="color: #ff9999;">Analysis failed for this segment.</span>
                         </div>
                     `;
                 }
