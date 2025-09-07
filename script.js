@@ -442,18 +442,17 @@ class AudioCaptioner {
         if (!this.currentAudioFile) return this.showError('Upload an audio file before analysis.');
         try {
             if (!this.emotionClassifier) {
-                this.analysisResults.textContent = 'Loading emotion model...';
-                this.emotionClassifier = await pipeline('audio-classification', 'superb/wav2vec2-base-superb-er');
+                this.analysisResults.textContent = 'Loading keyword spotting model...';
+                this.emotionClassifier = await pipeline('audio-classification', 'Xenova/wav2vec2-base-superb-ks');
             }
             const mono16k = await this.convertAudioFile(this.currentAudioFile);
-            const [emotion] = await this.emotionClassifier(mono16k);
+            const results = await this.emotionClassifier(mono16k);
+            const top = results[0];
             const { rms, zcr } = this.computeSignalStats(mono16k);
-            const instrumentalLikely = (zcr > 0.12 && emotion.score < 0.5) ? 'Likely instrumental/music' : 'Likely speech/vocals';
             this.analysisResults.innerHTML =
-                `<div><strong>Primary emotion:</strong> ${emotion.label} (${(emotion.score*100).toFixed(1)}%)</div>
+                `<div><strong>Top keyword:</strong> ${top.label} (${(top.score*100).toFixed(1)}%)</div>
                  <div><strong>Loudness (RMS):</strong> ${rms.toFixed(3)}</div>
-                 <div><strong>Zero-crossing rate:</strong> ${zcr.toFixed(3)}</div>
-                 <div><strong>Content type (heuristic):</strong> ${instrumentalLikely}</div>`;
+                 <div><strong>Zero-crossing rate:</strong> ${zcr.toFixed(3)}</div>`;
         } catch (e) {
             console.error(e);
             this.analysisResults.textContent = 'Analysis failed: ' + e.message;
