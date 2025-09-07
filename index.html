@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Captioner</title>
+    <link rel="stylesheet" href="styles.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "@xenova/transformers": "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.1/dist/transformers.min.js"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>Audio Captioner</h1>
+            <p>Upload an audio file and get real-time captions</p>
+        </header>
+
+        <div class="upload-section">
+            <input type="file" id="audioFile" accept="audio/*" class="file-input">
+            <label for="audioFile" class="upload-btn">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7,10 12,15 17,10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Choose Audio File
+            </label>
+            <input type="file" id="captionFile" accept=".srt" class="file-input">
+            <label for="captionFile" class="upload-btn">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path>
+                </svg>
+                Load Captions (.SRT)
+            </label>
+        </div>
+
+        <div class="player-section" id="playerSection">
+            <audio id="audioPlayer" controls></audio>
+            <div class="controls">
+                <button id="replayBtn" class="control-btn" style="display: none;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 11a8.1 8.1 0 0 0-15.5 2M4 13h4V9"></path>
+                        <path d="M4 13a8.1 8.1 0 0 0 15.5-2M20 11h-4v4"></path>
+                    </svg>
+                </button>
+                <button id="playPauseBtn" class="control-btn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="5,3 19,12 5,21"></polygon>
+                    </svg>
+                </button>
+                <button id="captionBtn" class="control-btn caption-btn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path>
+                    </svg>
+                    Start Captions
+                </button>
+                <button id="downloadBtn" class="control-btn download-btn" style="display: none;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="7,10 12,15 17,10"></polyline>
+                        <line x1="12" y1="15" x2="12" y2="3"></line>
+                    </svg>
+                    Download SRT
+                </button>
+                <button id="analyzeBtn" class="control-btn">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"></circle><path d="M12 7v5l3 3"></path>
+                    </svg>
+                    Analyze Audio
+                </button>
+            </div>
+        </div>
+
+        <div class="captions-section">
+            <div id="captionsDisplay" class="captions-display">
+                <p class="placeholder-text">Captions will appear here when you start the captioning...</p>
+            </div>
+            <div class="captions-history" id="captionsHistory"></div>
+        </div>
+
+        <div class="analysis-section">
+            <h3>Analysis</h3>
+            <div id="analysisResults" class="analysis-results">No analysis yet. Click “Analyze Audio”.</div>
+        </div>
+
+        <div class="info-section">
+            <div class="info-card">
+                <h3>How it works</h3>
+                <p><strong>1. Audio Upload:</strong> Upload any audio file (MP3, WAV, etc.) and our system will prepare it for processing.</p>
+                <p><strong>2. AI Transcription:</strong> We use OpenAI's Whisper model (tiny.en variant) running entirely in your browser - no data is sent to external servers.</p>
+                <p><strong>3. Word-Level Timing:</strong> The AI generates not just text, but precise timestamps for each word, enabling perfect synchronization with audio playback.</p>
+                <p><strong>4. Real-Time Display:</strong> As you play the audio, words appear exactly when spoken, creating a natural captioning experience.</p>
+                <p><strong>5. Download & Export:</strong> Export your captions as industry-standard SRT subtitle files for use in video editing or media players.</p>
+                <p><strong>Technical Note:</strong> First-time usage downloads a ~40MB AI model to your browser. Subsequent uses are instant. All processing happens locally - your audio never leaves your device.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js" type="module"></script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
