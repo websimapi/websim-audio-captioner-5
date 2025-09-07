@@ -26,6 +26,7 @@ class AudioCaptioner {
         this.currentAudioFile = null;
         this.emotionClassifier = null;
         this.emotionClassifier2 = null;
+        this.soundClassifier = null;
         
         this.initializeEventListeners();
         this.initializeTranscriber();
@@ -440,16 +441,31 @@ class AudioCaptioner {
     }
     
     async analyzeAudio() {
-        if (!this.currentAudioFile) return this.showError('Upload an audio file before analysis.');
+        if (!this.currentAudioFile) {
+            this.analysisResults.textContent = 'Please upload an audio file first.';
+            return;
+        }
+
+        this.analysisResults.textContent = 'Loading analysis models...';
+
         try {
-            this.analysisResults.textContent = 'Loading analysis models...';
+            // Initialize all models, loading them on demand
             if (!this.emotionClassifier) {
                 this.emotionClassifier = await pipeline('audio-classification', 'Xenova/wav2vec2-base-superb-ks');
             }
             if (!this.emotionClassifier2) {
                 this.emotionClassifier2 = await pipeline('audio-classification', 'prithivMLmods/Speech-Emotion-Classification-ONNX');
             }
+            if (!this.soundClassifier) {
+                this.soundClassifier = await pipeline('zero-shot-audio-classification', 'Xenova/clap-htsat-unfused');
+            }
+
+            this.analysisResults.textContent = 'Preparing audio for analysis...';
             const mono16k = await this.convertAudioFile(this.currentAudioFile);
+            
+            this.analysisResults.textContent = 'Performing overall analysis...';
+            
+            // --- Overall Analysis ---
             const [ksResults, emoResults] = await Promise.all([
                 this.emotionClassifier(mono16k),
                 this.emotionClassifier2(mono16k)
@@ -457,11 +473,60 @@ class AudioCaptioner {
             const topKS = ksResults[0];
             const topEmo = emoResults.slice(0, 3);
             const { rms, zcr } = this.computeSignalStats(mono16k);
-            this.analysisResults.innerHTML =
-                `<div><strong>Top keyword:</strong> ${topKS.label} (${(topKS.score*100).toFixed(1)}%)</div>
-                 <div><strong>Emotions:</strong> ${topEmo.map(e => `${e.label} ${(e.score*100).toFixed(1)}%`).join(', ')}</div>
-                 <div><strong>Loudness (RMS):</strong> ${rms.toFixed(3)}</div>
-                 <div><strong>Zero-crossing rate:</strong> ${zcr.toFixed(3)}</div>`;
+
+            let overallResultsHTML = `
+                <h3>Overall Audio Profile</h3>
+                <div><strong>Top Keyword/Sound:</strong> ${topKS.label} (${(topKS.score * 100).toFixed(1)}%)</div>
+                <div><strong>Dominant Emotions:</strong> ${topEmo.map(e => `${e.label} (${(e.score * 100).toFixed(1)}%)`).join(', ')}</div>
+                <div><strong>Loudness (RMS):</strong> ${rms.toFixed(3)} <small>(Higher value means louder audio)</small></div>
+                <div><strong>Noisiness/Pitch (ZCR):</strong> ${zcr.toFixed(3)} <small>(Higher value can indicate noisy or high-frequency sounds)</small></div>
+            `;
+            
+            this.analysisResults.innerHTML = overallResultsHTML;
+
+            // --- Detailed Sound Event Timeline ---
+            const timelineContainer = document.createElement('div');
+            timelineContainer.innerHTML = '<h3>Sound Event Timeline</h3><div id="timeline-results"><p>Analyzing audio segments...</p></div>';
+            this.analysisResults.appendChild(timelineContainer);
+            const timelineResultsDiv = document.getElementById('timeline-results');
+
+            const candidate_labels = [
+                'Speech', 'Singing', 'Music', 'Silence', 'Effects',
+                'Piano', 'Acoustic guitar', 'Electric guitar', 'Drums', 'Violin', 'Synthesizer',
+                'Applause', 'Laughter', 'Car horn', 'Siren', 'Birdsong'
+            ];
+
+            const chunkDuration = 5; // seconds
+            const sampleRate = 16000;
+            const chunkSize = chunkDuration * sampleRate;
+            let timelineHTML = '';
+
+            for (let i = 0; i < mono16k.length; i += chunkSize) {
+                const chunk = mono16k.slice(i, i + chunkSize);
+                if (chunk.length < sampleRate / 2) continue; // Ignore very short chunks
+
+                const startTime = i / sampleRate;
+                const endTime = (i + chunk.length) / sampleRate;
+                
+                // Update UI with progress
+                timelineResultsDiv.innerHTML = timelineHTML + `<p><em>Analyzing ${this.formatTime(startTime)} - ${this.formatTime(endTime)}...</em></p>`;
+
+                const soundEvents = await this.soundClassifier(chunk, candidate_labels, { top_k: 3 });
+                
+                const eventsString = soundEvents
+                    .filter(e => e.score > 0.1) // Filter out low-confidence results
+                    .map(e => `${e.label} (${(e.score * 100).toFixed(0)}%)`).join(', ');
+
+                if (eventsString) {
+                    timelineHTML += `
+                        <div class="timeline-item">
+                            <strong>${this.formatTime(startTime)} - ${this.formatTime(endTime)}:</strong> ${eventsString}
+                        </div>
+                    `;
+                }
+            }
+             timelineResultsDiv.innerHTML = timelineHTML || '<p>No distinct sound events were detected.</p>';
+
         } catch (e) {
             console.error(e);
             this.analysisResults.textContent = 'Analysis failed: ' + e.message;
