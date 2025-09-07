@@ -25,6 +25,7 @@ class AudioCaptioner {
         this.captionType = 'word'; // 'word' or 'sentence'
         this.currentAudioFile = null;
         this.emotionClassifier = null;
+        this.emotionClassifier2 = null;
         
         this.initializeEventListeners();
         this.initializeTranscriber();
@@ -441,16 +442,24 @@ class AudioCaptioner {
     async analyzeAudio() {
         if (!this.currentAudioFile) return this.showError('Upload an audio file before analysis.');
         try {
+            this.analysisResults.textContent = 'Loading analysis models...';
             if (!this.emotionClassifier) {
-                this.analysisResults.textContent = 'Loading keyword spotting model...';
                 this.emotionClassifier = await pipeline('audio-classification', 'Xenova/wav2vec2-base-superb-ks');
             }
+            if (!this.emotionClassifier2) {
+                this.emotionClassifier2 = await pipeline('audio-classification', 'prithivMLmods/Speech-Emotion-Classification-ONNX');
+            }
             const mono16k = await this.convertAudioFile(this.currentAudioFile);
-            const results = await this.emotionClassifier(mono16k);
-            const top = results[0];
+            const [ksResults, emoResults] = await Promise.all([
+                this.emotionClassifier(mono16k),
+                this.emotionClassifier2(mono16k)
+            ]);
+            const topKS = ksResults[0];
+            const topEmo = emoResults.slice(0, 3);
             const { rms, zcr } = this.computeSignalStats(mono16k);
             this.analysisResults.innerHTML =
-                `<div><strong>Top keyword:</strong> ${top.label} (${(top.score*100).toFixed(1)}%)</div>
+                `<div><strong>Top keyword:</strong> ${topKS.label} (${(topKS.score*100).toFixed(1)}%)</div>
+                 <div><strong>Emotions:</strong> ${topEmo.map(e => `${e.label} ${(e.score*100).toFixed(1)}%`).join(', ')}</div>
                  <div><strong>Loudness (RMS):</strong> ${rms.toFixed(3)}</div>
                  <div><strong>Zero-crossing rate:</strong> ${zcr.toFixed(3)}</div>`;
         } catch (e) {
